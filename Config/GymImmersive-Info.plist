@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSHandsTrackingUsageDescription</key>
+	<string>GymImmersive follows your hand so the virtual dumbbell moves with you and your curls and arm holds can be counted. Hand data stays on this device and only movement measurements for the study are saved.</string>
+	<key>NSWorldSensingUsageDescription</key>
+	<string>GymImmersive uses your head position to estimate shoulder height so it can tell whether your arm is raised during holds. Nothing about your surroundings is saved.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationPreferredDefaultSceneSessionRole</key>
+		<string>UIWindowSceneSessionRoleApplication</string>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+</dict>
+</plist>
