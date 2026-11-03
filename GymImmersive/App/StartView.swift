@@ -29,6 +29,9 @@ struct StartView: View {
             Text("Stop right away if you feel pain or dizziness.")
                 .font(.headline)
                 .foregroundStyle(.secondary)
+            if let controller = appModel.controller, controller.status.isFinished {
+                TimeLogView(controller: controller)
+            }
         }
         .padding(48)
         .alert("GymImmersive", isPresented: Binding(get: { appModel.alertMessage != nil },

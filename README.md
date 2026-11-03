@@ -48,12 +48,19 @@ All values are in `WorkoutSettings` ([WorkoutSettings.swift](GymImmersive/Sessio
 Files are saved to the app's Documents folder. Because file sharing is on, you can get them
 through the Files app or Finder (connect the headset, then open the GymImmersive files).
 
-Each session writes two files:
+Each session writes three files:
 
 - `GymImmersive_<yyyyMMdd-HHmmss>_events.csv`: one row per event. Rows are added and
   flushed one at a time.
 - `GymImmersive_<yyyyMMdd-HHmmss>_summary.csv`: one row per set (practice, set1–set3),
   with session-level columns repeated on each row. The file is rewritten atomically after every phase.
+- `GymImmersive_<yyyyMMdd-HHmmss>_timelog.txt`: a readable time log. Every event (except the
+  10 Hz `motion_sample` rows) is one line with the local time to the millisecond, the seconds since
+  session start, the set and phase, the event and its values, for example
+  `2026-11-02 14:03:12.481  t=12.300s  [set1 curls]  rep  rep_index=3 tempo_score=0.950`.
+  Lines are added and flushed one at a time, and the same lines go to the Xcode console
+  (subsystem `GymImmersive`, category `TimeLog`). After a session the Start window shows the newest
+  lines and a **Save** button that exports the log as a text file.
 
 `completion_status` takes one of three values:
 

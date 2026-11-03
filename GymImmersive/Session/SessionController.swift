@@ -26,6 +26,8 @@ final class SessionController {
     private(set) var coachTip: String?
     /// Increments on every counted rep; the immersive view plays a sound when it changes.
     private(set) var repFeedbackCount = 0
+    /// Timestamped, readable record of this session's events (newest last, capped at `TimeLog.maxEntries`).
+    private(set) var timeLog: [TimeLogEntry] = []
     var draftRating = NASATLXRating()
 
     @ObservationIgnored private let recorder: SessionRecorder?
@@ -72,6 +74,8 @@ final class SessionController {
 
     var eventsURL: URL? { recorder?.eventsURL }
     var summaryURL: URL? { recorder?.summaryURL }
+    var timeLogURL: URL? { recorder?.timeLogURL }
+    var timeLogText: String { TimeLog.text(sessionID: summary.sessionID, entries: timeLog) }
     var status: SessionStatus { session.status }
     var phase: Phase? { session.currentPhase }
     var currentSet: SetConfig? { session.currentSet }
@@ -544,13 +548,18 @@ final class SessionController {
     }
 
     private func log(_ type: String, _ fields: [EventField: String] = [:], phase explicitPhase: Phase? = nil) {
-        guard let recorder else { return }
         let now = clock()
         let p = explicitPhase ?? phase
         let set = p.map { settings.config(forSet: $0.setIndex) }
-        recorder.append(LogEvent(wallClock: Date(), sessionTime: startTime.map { now - $0 } ?? 0,
-                                 activeTime: session.activeTime, type: type, phase: p?.logName ?? "",
-                                 setIndex: p?.setIndex, weightKg: set?.virtualWeightKg, fields: fields))
+        let event = LogEvent(wallClock: Date(), sessionTime: startTime.map { now - $0 } ?? 0,
+                             activeTime: session.activeTime, type: type, phase: p?.logName ?? "",
+                             setIndex: p?.setIndex, weightKg: set?.virtualWeightKg, fields: fields)
+        recorder?.append(event)
+        guard TimeLog.includes(type) else { return }
+        let line = TimeLog.line(for: event)
+        TimeLog.logger.info("\(line, privacy: .public)")
+        timeLog.append(TimeLogEntry(timestamp: event.wallClock, sessionTime: event.sessionTime, type: type, line: line))
+        if timeLog.count > TimeLog.maxEntries { timeLog.removeFirst(timeLog.count - TimeLog.maxEntries) }
     }
 
     private func persistSummary() {

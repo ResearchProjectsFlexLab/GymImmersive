@@ -1,6 +1,7 @@
 import Foundation
 
-/// Writes one session's files. Events are appended and flushed one line at a time, and the
+/// Writes one session's files. Events are appended and flushed one line at a time (to the events
+/// CSV and, as readable timestamped lines, to the time log), and the
 /// summary is rewritten atomically after every phase, so an interruption at any point leaves
 /// consistent files on disk. A summary still marked `in_progress` at next launch is converted to
 /// `incomplete` by `SessionArchive.recoverInterruptedSessions`.
@@ -10,7 +11,9 @@ final class SessionRecorder {
     let info: SessionInfo
     let eventsURL: URL
     let summaryURL: URL
+    let timeLogURL: URL
     private var handle: FileHandle?
+    private var timeLogHandle: FileHandle?
     private(set) var writeError: Error?
 
     init(directory: URL, info: SessionInfo, startedAt: Date) throws {
@@ -22,6 +25,7 @@ final class SessionRecorder {
         let base = "GymImmersive_\(sessionID)"
         eventsURL = directory.appendingPathComponent("\(base)_events.csv")
         summaryURL = directory.appendingPathComponent("\(base)_summary.csv")
+        timeLogURL = directory.appendingPathComponent("\(base)_timelog.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         guard !FileManager.default.fileExists(atPath: eventsURL.path) else {
             throw CocoaError(.fileWriteFileExists)
@@ -29,6 +33,10 @@ final class SessionRecorder {
         try Data((CSV.eventHeader + "\n").utf8).write(to: eventsURL, options: .atomic)
         handle = try FileHandle(forWritingTo: eventsURL)
         try handle?.seekToEnd()
+        let header = TimeLog.header(sessionID: sessionID, startedAt: startedAt) + "\n"
+        try Data(header.utf8).write(to: timeLogURL, options: .atomic)
+        timeLogHandle = try FileHandle(forWritingTo: timeLogURL)
+        try timeLogHandle?.seekToEnd()
     }
 
     func append(_ event: LogEvent) {
@@ -36,6 +44,12 @@ final class SessionRecorder {
         let row = CSV.eventRow(event, sessionID: sessionID, info: info) + "\n"
         do {
             try handle.write(contentsOf: Data(row.utf8))
+        } catch {
+            writeError = error
+        }
+        guard let timeLogHandle, TimeLog.includes(event.type) else { return }
+        do {
+            try timeLogHandle.write(contentsOf: Data((TimeLog.line(for: event) + "\n").utf8))
         } catch {
             writeError = error
         }
@@ -53,6 +67,9 @@ final class SessionRecorder {
         try? handle?.synchronize()
         try? handle?.close()
         handle = nil
+        try? timeLogHandle?.synchronize()
+        try? timeLogHandle?.close()
+        timeLogHandle = nil
     }
 
     static func sanitize(_ id: String) -> String {
@@ -141,6 +158,13 @@ enum SessionArchive {
                                         }
                                     })
                 try? handle.write(contentsOf: Data((note + "\n").utf8))
+                try? handle.close()
+            }
+            let timeLogURL = directory.appendingPathComponent("\(session.baseName)_timelog.txt")
+            if let handle = try? FileHandle(forWritingTo: timeLogURL) {
+                _ = try? handle.seekToEnd()
+                let note = "\(LogClock.string(from: now))  session_recovered  status=incomplete reason=app_terminated\n"
+                try? handle.write(contentsOf: Data(note.utf8))
                 try? handle.close()
             }
             repaired += 1
