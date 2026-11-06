@@ -1,5 +1,6 @@
 import ARKit
 import QuartzCore
+import os
 import simd
 
 /// Real input: ARKit hand tracking for both hands plus the device pose for shoulder estimation.
@@ -9,12 +10,13 @@ import simd
 final class HandTrackingInputProvider: MovementInputProvider {
     let name = "hand_tracking"
     let drivesDumbbellFromSamples = false
-    private let dumbbellHand: DumbbellHand
+    /// Read by the tracking task, written when the session switches arms.
+    private let activeArm: OSAllocatedUnfairLock<DumbbellHand>
     private var session: ARKitSession?
     private var task: Task<Void, Never>?
 
     init(dumbbellHand: DumbbellHand) {
-        self.dumbbellHand = dumbbellHand
+        activeArm = OSAllocatedUnfairLock(initialState: dumbbellHand)
     }
 
     func start() async throws -> AsyncStream<MovementSample> {
@@ -31,7 +33,7 @@ final class HandTrackingInputProvider: MovementInputProvider {
 
         let (stream, continuation) = AsyncStream.makeStream(of: MovementSample.self,
                                                             bufferingPolicy: .bufferingNewest(16))
-        let side = dumbbellHand
+        let activeArm = self.activeArm
         task = Task.detached {
             var head: (position: SIMD3<Float>, forward: SIMD3<Float>)?
             var grip: SIMD3<Float>?
@@ -41,6 +43,7 @@ final class HandTrackingInputProvider: MovementInputProvider {
                 if Task.isCancelled { break }
                 let anchor = update.anchor
                 let now = MonotonicClock.now()
+                let side = activeArm.withLock { $0 }
                 let isDumbbellHand = (anchor.chirality == .right) == (side == .right)
                 if isDumbbellHand {
                     grip = HandMath.gripPosition(anchor)
@@ -73,6 +76,10 @@ final class HandTrackingInputProvider: MovementInputProvider {
     }
 
     func setMotionHint(_ hint: MotionHint) {}
+
+    func setActiveArm(_ arm: DumbbellHand) {
+        activeArm.withLock { $0 = arm }
+    }
 }
 
 private enum HandMath {

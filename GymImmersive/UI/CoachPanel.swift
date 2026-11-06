@@ -1,17 +1,25 @@
 import SwiftUI
 
-/// The floating coach in front of the participant: instructions, timer, progress, the serial
-/// subtraction answer choices during holds, and the NASA-TLX rating after each set.
+/// The floating coach in front of the participant: session timer, instructions, progress, the
+/// serial subtraction answer choices during holds, the final rating, and the Pause/Stop controls,
+/// which live here so they are always in view.
 struct CoachPanel: View {
     @Bindable var controller: SessionController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if case .rating = controller.phase, controller.status == .running {
+            if controller.status == .ready {
+                WorkoutIntroView(controller: controller)
+            } else if case .rating = controller.phase, controller.status == .running {
                 NASATLXView(rating: $controller.draftRating) { controller.submitRating() }
             } else {
                 coach
+            }
+            if !controller.status.isFinished {
+                Divider()
+                ControlsPanel(controller: controller)
+                    .frame(maxWidth: .infinity)
             }
         }
         .padding(32)
@@ -23,38 +31,54 @@ struct CoachPanel: View {
     private var coach: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                Label(controller.setTitle, systemImage: "dumbbell.fill")
-                    .font(.headline)
+                Text(controller.setTitle)
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let countdown = controller.countdownText {
-                    Text(countdown)
-                        .font(.title2.monospacedDigit().weight(.semibold))
-                        .accessibilityLabel("Time remaining \(countdown)")
+                Text(controller.sessionCountdownText)
+                    .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                Text("left").font(.headline).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+
+            // Time of day and start time, in the same local clock as the time log.
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                HStack(spacing: 16) {
+                    Label {
+                        Text(context.date, format: .dateTime.hour().minute().second())
+                    } icon: {
+                        Image(systemName: "clock")
+                    }
+                    if let started = controller.workoutStartedAt {
+                        Text("Started \(started.formatted(.dateTime.hour().minute().second()))")
+                    }
                 }
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.secondary)
             }
 
             Text(controller.coachHeadline)
-                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .font(.system(size: 52, weight: .bold, design: .rounded))
                 .foregroundStyle(controller.showArmUpCue ? Color.orange : Color.primary)
                 .minimumScaleFactor(0.6)
-                .lineLimit(2)
+                .lineLimit(1)
                 .accessibilityAddTraits(.updatesFrequently)
 
-            Text(controller.coachInstruction)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if !controller.coachInstruction.isEmpty {
+                Text(controller.coachInstruction)
+                    .font(.title2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if case .curls = controller.phase, controller.isColourGameActive, let color = controller.plateColor {
+                ColorTag(color: color)
+            }
 
             if let tip = controller.coachTip {
                 Text(tip)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.yellow)
                     .transition(.opacity)
-            }
-
-            if case .curls = controller.phase, controller.status == .running {
-                TempoGuide(value: controller.tempoGuide, isUp: controller.isUpHalfOfTempo)
             }
 
             if case .hold = controller.phase, controller.status == .running,
@@ -68,34 +92,26 @@ struct CoachPanel: View {
                 }
             }
             .tint(controller.showArmUpCue ? .orange : .green)
-            .accessibilityLabel(controller.repText ?? "Phase progress")
+            .accessibilityLabel(controller.repText ?? "Progress")
             .accessibilityValue("\(Int(controller.session.phaseProgress * 100)) percent")
         }
     }
 }
 
-/// A slow bar that rises for 2 s and lowers for 2 s, showing the coached tempo.
-private struct TempoGuide: View {
-    var value: Double
-    var isUp: Bool
+/// The current plate colour, shown as a large swatch with its name.
+private struct ColorTag: View {
+    var color: PlateColor
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: isUp ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                .font(.title)
-                .foregroundStyle(isUp ? .green : .blue)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.15))
-                    Capsule().fill(isUp ? Color.green : Color.blue)
-                        .frame(width: max(12, geo.size.width * value))
-                }
-            }
-            .frame(height: 12)
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(red: color.rgb.r, green: color.rgb.g, blue: color.rgb.b))
+                .frame(width: 56, height: 40)
+            Text(color.displayName)
+                .font(.title.weight(.bold))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Tempo guide")
-        .accessibilityValue(isUp ? "Curl up" : "Lower down")
+        .accessibilityLabel("Colour \(color.displayName)")
     }
 }
 

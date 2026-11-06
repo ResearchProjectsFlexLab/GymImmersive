@@ -4,7 +4,7 @@ import simd
 /// One movement frame in world space (metres, y up). Timestamps use `MonotonicClock`.
 struct MovementSample: Sendable, Equatable {
     var time: TimeInterval
-    /// Grip position of the dumbbell hand; nil while that hand is not tracked.
+    /// Grip position of the active arm's hand (the one holding the phone); nil while not tracked.
     var dumbbellHand: SIMD3<Float>?
     /// Device (head) position.
     var head: SIMD3<Float>
@@ -43,6 +43,8 @@ protocol MovementInputProvider: AnyObject {
     func start() async throws -> AsyncStream<MovementSample>
     func stop()
     func setMotionHint(_ hint: MotionHint)
+    /// Which hand holds the phone/dumbbell now; samples report that hand.
+    func setActiveArm(_ arm: DumbbellHand)
 }
 
 enum MonotonicClock {

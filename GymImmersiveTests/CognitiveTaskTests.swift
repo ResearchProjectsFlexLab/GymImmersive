@@ -189,6 +189,6 @@ struct NASATLXTests {
         #expect(r.mental == 100 && r.physical == 0)
         #expect(abs(r.rawMean - 240.0 / 6) < 1e-9)
         #expect(TLXScale.allCases.count == 6)
-        #expect(TLXScale.performance.anchors.low == "Perfect")
+        #expect(TLXScale.performance.anchors.low == "Great")
     }
 }

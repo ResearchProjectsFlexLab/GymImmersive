@@ -23,6 +23,12 @@ final class SessionController {
     private(set) var holdReference: SIMD3<Float>?
     private(set) var lastTempo: TempoScore?
     private(set) var errorMessage: String?
+    /// Movement input is running and the participant can press Start.
+    private(set) var isReadyToStart = false
+    /// The arm holding the phone right now (right first in every round, then left).
+    private(set) var activeArm: DumbbellHand
+    /// Wall-clock time Start was pressed (shown on the coach panel).
+    private(set) var workoutStartedAt: Date?
     private(set) var coachTip: String?
     /// Increments on every counted rep; the immersive view plays a sound when it changes.
     private(set) var repFeedbackCount = 0
@@ -62,13 +68,13 @@ final class SessionController {
         self.voice = voice
         self.clock = clock
         self.rng = SeededRandom(seed: info.seed)
-        self.session = WorkoutSession(settings: settings)
+        self.activeArm = info.dumbbellHand
+        self.session = WorkoutSession(settings: settings, duration: info.duration)
         self.curlDetector = CurlDetector(settings: settings)
         self.recorder = try directory.map { try SessionRecorder(directory: $0, info: info, startedAt: now) }
-        let sets = (0...settings.sets.count).map { SetRecord(index: $0, config: settings.config(forSet: $0)) }
         self.summary = SessionSummary(sessionID: recorder?.sessionID ?? "unsaved", info: info,
-                                      inputSource: input.name, startedAt: now, sets: sets)
-        log("session_created", [.detail: "cognitive=\(info.cognitiveTaskEnabled) hand=\(info.dumbbellHand.rawValue) seed=\(info.seed) input=\(input.name)"])
+                                      inputSource: input.name, startedAt: now, sets: [])
+        log("session_created", [.detail: "duration_s=\(Int(info.duration)) cognitive=\(info.cognitiveTaskEnabled) hand=\(info.dumbbellHand.rawValue) seed=\(info.seed) input=\(input.name)"])
         persistSummary()
     }
 
@@ -79,12 +85,16 @@ final class SessionController {
     var status: SessionStatus { session.status }
     var phase: Phase? { session.currentPhase }
     var currentSet: SetConfig? { session.currentSet }
-    var isCognitiveActive: Bool { info.cognitiveTaskEnabled && (phase?.setIndex ?? 0) > 0 }
+    var isCognitiveActive: Bool { info.cognitiveTaskEnabled && phase != nil && phase != .rating }
+    /// The colour 2-back runs during curls only when enabled in the settings.
+    var isColourGameActive: Bool { isCognitiveActive && settings.nBackDuringCurls }
     var showArmUpCue: Bool { holdFrame?.showArmUpCue ?? false }
 
     // MARK: Lifecycle
 
-    /// Starts movement input, then the workout. Safe to call more than once; only the first call acts.
+    /// Starts movement input (asking for hand-tracking permission if needed). The workout itself
+    /// waits for `startWorkout()`, so the participant can read the instructions first.
+    /// Safe to call more than once; only the first call acts.
     func begin() async {
         guard !hasBegun, session.status == .ready else { return }
         hasBegun = true
@@ -103,6 +113,15 @@ final class SessionController {
             stop(.handTrackingUnavailable)
             return
         }
+        isReadyToStart = true
+        log("instructions_shown")
+    }
+
+    /// The participant pressed Start: the session clock begins.
+    func startWorkout() {
+        guard isReadyToStart, session.status == .ready else { return }
+        isReadyToStart = false
+        workoutStartedAt = Date()
         let now = clock()
         startTime = now
         lastSampleTime = now
@@ -131,16 +150,14 @@ final class SessionController {
         if var task = subtraction, let result = task.checkTimeout(at: now) {
             subtraction = task
             logSubtraction(result)
-            showTip("Time's up: it was \(result.problem.correctAnswer)", now: now)
+            showTip("Too slow. It was \(result.problem.correctAnswer).", now: now)
             presentSubtraction(at: now)
         }
 
-        // A stalled stream counts as lost tracking too.
-        if let last = lastSampleTime, now - last > settings.trackingLossPauseDelay, trackingLostSince == nil {
+        // A stalled stream counts as lost tracking too. Tracking loss is only logged; the workout
+        // keeps running so the participant is never interrupted.
+        if let last = lastSampleTime, now - last > settings.inputStallThreshold, trackingLostSince == nil {
             markTrackingLost(at: last)
-        }
-        if let since = trackingLostSince, now - since >= settings.trackingLossPauseDelay, phaseNeedsTracking {
-            pause(.trackingLost)
         }
         if coachTip != nil, now >= coachTipExpiry { coachTip = nil }
     }
@@ -149,12 +166,10 @@ final class SessionController {
         let now = clock()
         guard session.pause(reason, at: now) else { return }
         summary.pauseCount += 1
-        if reason == .trackingLost { summary.trackingLossCount += 1 }
         log("pause", [.reason: reason.rawValue])
         interruptTasks(at: now)
         input.setMotionHint(.idle)
         voice.stop()
-        if reason == .trackingLost { voice.speak("Paused. I lost track of your hand.") }
         persistSummary()
     }
 
@@ -216,15 +231,15 @@ final class SessionController {
               let result = task.answer(choice, at: now) else { return }
         subtraction = task
         logSubtraction(result)
-        showTip(result.outcome == .correct ? "Nice! Keep going" : "It was \(result.problem.correctAnswer). Keep going",
+        showTip(result.outcome == .correct ? "Right!" : "It was \(result.problem.correctAnswer).",
                 now: now)
         presentSubtraction(at: now)
     }
 
     func submitRating() {
-        guard session.status == .running, case .rating(let setIndex) = phase else { return }
+        guard session.status == .running, phase == .rating else { return }
         let r = draftRating
-        summary.sets[setIndex].tlx = r
+        summary.tlx = r
         log("nasa_tlx", [.tlxMental: CSV.number(r.mental, decimals: 0), .tlxPhysical: CSV.number(r.physical, decimals: 0),
                          .tlxTemporal: CSV.number(r.temporal, decimals: 0), .tlxPerformance: CSV.number(r.performance, decimals: 0),
                          .tlxEffort: CSV.number(r.effort, decimals: 0), .tlxFrustration: CSV.number(r.frustration, decimals: 0),
@@ -254,7 +269,7 @@ final class SessionController {
             log("tracking_restored")
         }
         guard session.status == .running, let phase else { return }
-        let shoulder = BodyGeometry.shoulder(head: sample.head, forward: sample.headForward, hand: info.dumbbellHand)
+        let shoulder = BodyGeometry.shoulder(head: sample.head, forward: sample.headForward, hand: activeArm)
 
         switch phase {
         case .curls:
@@ -270,7 +285,7 @@ final class SessionController {
             if holdReference == nil, let ref = analyzer.reference { holdReference = SIMD3<Float>(ref) }
             if frame.armDropped {
                 log("arm_drop", [.armDrops: String(analyzer.armDropCount)])
-                voice.speak("Arm up!")
+                voice.speak("Lift your arm!")
             }
             logMotion(t, hand: hand, shoulder: shoulder, frame: frame)
         default:
@@ -279,26 +294,28 @@ final class SessionController {
     }
 
     private func handleCurl(_ event: CurlEvent, at t: TimeInterval) {
-        guard case .curls(let setIndex) = phase else { return }
+        guard case .curls(let setIndex, let arm) = phase else { return }
         switch event {
         case .partial(_, let peak):
-            summary.sets[setIndex].partialReps += 1
+            updateRecord(setIndex, arm) { $0.partialReps += 1 }
             log("partial_rep", [.peakProgress: CSV.number(peak)])
-            showTip("All the way up!", now: clock())
+            showTip("Go all the way up!", now: clock())
         case .rep(let rep):
             let set = settings.config(forSet: setIndex)
             let tempo = TempoScore.evaluate(up: rep.upDuration, down: rep.downDuration,
                                             targetUp: settings.tempoUp, targetDown: settings.tempoDown,
                                             tolerance: set.tempoTolerance)
             lastTempo = tempo
-            var record = summary.sets[setIndex]
-            record.reps += 1
-            record.tempoScores.append(tempo.score)
-            record.upDurations.append(rep.upDuration)
-            record.downDurations.append(rep.downDuration)
-            if tempo.onTempo { record.onTempoReps += 1 }
-            summary.sets[setIndex] = record
-            log("rep", [.repIndex: String(record.reps), .upS: CSV.number(rep.upDuration), .downS: CSV.number(rep.downDuration),
+            var reps = 0
+            updateRecord(setIndex, arm) { record in
+                record.reps += 1
+                record.tempoScores.append(tempo.score)
+                record.upDurations.append(rep.upDuration)
+                record.downDurations.append(rep.downDuration)
+                if tempo.onTempo { record.onTempoReps += 1 }
+                reps = record.reps
+            }
+            log("rep", [.repIndex: String(reps), .upS: CSV.number(rep.upDuration), .downS: CSV.number(rep.downDuration),
                         .tempoScore: CSV.number(tempo.score), .onTempo: CSV.bool(tempo.onTempo),
                         .peakProgress: CSV.number(rep.peakProgress)])
             repFeedbackCount += 1
@@ -312,16 +329,10 @@ final class SessionController {
     private func markTrackingLost(at t: TimeInterval) {
         trackingLostSince = t
         isHandTracked = false
+        summary.trackingLossCount += 1
         log("tracking_lost")
         curlDetector.reset()
         holdAnalyzer?.markGap()
-    }
-
-    private var phaseNeedsTracking: Bool {
-        switch phase {
-        case .curls, .hold: true
-        default: false
-        }
     }
 
     // MARK: Phases
@@ -341,26 +352,34 @@ final class SessionController {
 
     private func enter(_ phase: Phase, at now: TimeInterval) {
         let setIndex = phase.setIndex
-        if summary.sets[setIndex].status == .notStarted { summary.sets[setIndex].status = .partial }
+        if let arm = phase.arm {
+            if arm != activeArm {
+                log("arm_switch", [.arm: arm.rawValue])
+            }
+            activeArm = arm
+            input.setActiveArm(arm)
+            curlDetector.reset()
+            updateRecord(setIndex, arm) { if $0.status == .notStarted { $0.status = .partial } }
+        }
         log("phase_start", [.detail: durationDetail(phase)])
         coachTip = nil
         holdFrame = nil
-        // Give a hand that was already out of view the full grace period in the new phase.
-        if trackingLostSince != nil { trackingLostSince = now }
         input.setMotionHint(motionHint(for: phase))
         let set = settings.config(forSet: setIndex)
 
         switch phase {
-        case .prepare(0, _):
-            voice.speak("Practice set. \(set.curlReps) curls. Two seconds up, two seconds down. Stop any time if you feel pain or dizziness.")
-        case .prepare(_, .curls):
-            voice.speak("Set \(setIndex). \(Int(set.virtualWeightKg)) kilos. Get ready to curl.")
-        case .prepare(_, .hold):
-            voice.speak("Get ready to hold your arm straight out at shoulder height.")
+        case .prepare(1, .curls, .right):
+            voice.speak("Let's go. Right arm. Lift slowly up, and slowly down.")
+        case .prepare(_, .curls, .left):
+            voice.speak("Switch. Put the phone in your left hand.")
+        case .prepare(_, .curls, _):
+            voice.speak("Round \(setIndex). Phone in your right hand.")
+        case .prepare(_, .hold, _):
+            voice.speak("Get ready to hold your arm out.")
         case .curls:
             curlDetector.reset()
             lastTempo = nil
-            if isCognitiveActive {
+            if isColourGameActive {
                 nBack = NBackTask(length: set.curlReps, n: settings.nBackLevel,
                                   matchRate: settings.nBackMatchRate, rng: &rng)
                 log("nback_sequence", [.detail: nBack!.sequence.map(\.rawValue).joined(separator: " "),
@@ -368,7 +387,7 @@ final class SessionController {
                 presentNBackStimulus(at: now)
             } else {
                 plateColor = nil
-                voice.speak("Curl up, and down.")
+                voice.speak("Up, and down.")
             }
         case .hold:
             holdAnalyzer = HoldAnalyzer(set: set, settings: settings)
@@ -378,51 +397,68 @@ final class SessionController {
                 subtraction = SerialSubtractionTask(startValue: start, step: settings.subtractionStep,
                                                     choiceCount: settings.subtractionChoiceCount,
                                                     timeLimit: settings.subtractionTimeLimit)
-                voice.speak("Hold it! Start at \(start). Count down by \(settings.subtractionStep)s.")
+                voice.speak("Hold your arm out. Start at \(start). Take away \(settings.subtractionStep).")
                 presentSubtraction(at: now)
             } else {
-                voice.speak("Hold it!")
+                voice.speak("Hold your arm out.")
             }
         case .rating:
+            plateColor = nil
             draftRating = NASATLXRating()
-            voice.speak("Nice work. How did that set feel?")
+            voice.speak("All done! How did it feel?")
         case .rest:
             plateColor = nil
-            voice.speak("Rest. Shake out your arm.")
+            voice.speak("Rest.")
         }
     }
 
     private func exit(_ phase: Phase, cause: String, at now: TimeInterval) {
-        finalizePhaseData(phase, at: now, interrupted: false)
-        if case .curls = phase { summary.sets[phase.setIndex].curlTimeLimitReached = cause == "time_limit" }
+        // When the session time runs out mid-trial, that trial's window was cut short: not scored.
+        finalizePhaseData(phase, at: now, interrupted: cause == "time_up")
+        if case .curls(let round, let arm) = phase {
+            updateRecord(round, arm) { $0.curlTimeLimitReached = cause == "time_limit" }
+        }
         log("phase_end", [.reason: cause], phase: phase)
-        let isLastPhaseOfSet: Bool = switch phase {
-        case .rating: true
-        case .curls(0): true
+        // An arm's part of a round is complete once its hold (or, without a hold, its curls) ran to the end.
+        let blockDone: Bool = switch phase {
+        case .hold: cause == "timer"
+        case .curls(let round, _): settings.config(forSet: round).holdDuration == 0 && cause != "time_up"
         default: false
         }
-        if isLastPhaseOfSet { summary.sets[phase.setIndex].status = .completed }
+        if blockDone, let arm = phase.arm { updateRecord(phase.setIndex, arm) { $0.status = .completed } }
+    }
+
+    /// Edits the record of `round` for `arm`, creating it when that part of the round starts.
+    private func updateRecord(_ round: Int, _ arm: DumbbellHand, _ change: (inout SetRecord) -> Void) {
+        guard round >= 1 else { return }
+        if let i = summary.sets.lastIndex(where: { $0.index == round && $0.arm == arm }) {
+            change(&summary.sets[i])
+        } else {
+            var record = SetRecord(index: round, config: settings.config(forSet: round), arm: arm)
+            change(&record)
+            summary.sets.append(record)
+        }
     }
 
     /// Closes the open cognitive trials and stores hold measurements for `phase`.
     private func finalizePhaseData(_ phase: Phase, at now: TimeInterval, interrupted: Bool) {
         switch phase {
-        case .curls(let setIndex):
+        case .curls(let setIndex, let arm):
             if var task = nBack {
                 if let closed = task.closeCurrent(interrupted: interrupted) { logNBackTrial(closed, phase: phase) }
-                summary.sets[setIndex].nBack = task.results
+                updateRecord(setIndex, arm) { $0.nBack = task.results }
             }
             nBack = nil
-        case .hold(let setIndex):
+        case .hold(let setIndex, let arm):
             if var task = subtraction {
                 if let r = task.interrupt() { logSubtraction(r, phase: phase) }
-                summary.sets[setIndex].subtraction = task.results
+                updateRecord(setIndex, arm) { $0.subtraction = task.results }
             }
             subtraction = nil
             subtractionProblem = nil
             if let analyzer = holdAnalyzer {
                 let s = analyzer.summary()
-                summary.sets[setIndex].hold = s
+                updateRecord(setIndex, arm) { $0.hold = s }
                 log("hold_summary", [.tremorRmsMm: CSV.number(s.tremorRMSmm, decimals: 2),
                                      .verticalDriftMm: CSV.number(s.verticalDriftMm, decimals: 1),
                                      .totalDriftMm: CSV.number(s.totalDriftMm, decimals: 1),
@@ -447,7 +483,7 @@ final class SessionController {
         inputTask = nil
         input.stop()
         voice.stop()
-        if status == .completed { voice.speak("Workout complete. Great job!") }
+        if status == .completed { voice.speak("Great job!") }
         summary.status = status
         summary.stopReason = reason
         summary.endedAt = Date()
@@ -474,7 +510,7 @@ final class SessionController {
     private func motionHint(for phase: Phase) -> MotionHint {
         switch phase {
         case .curls: .curls(up: settings.tempoUp, down: settings.tempoDown)
-        case .hold, .prepare(_, .hold): .hold
+        case .hold, .prepare(_, .hold, _): .hold
         default: .idle
         }
     }
@@ -509,7 +545,7 @@ final class SessionController {
         guard let p = subtractionProblem else { return nil }
         return p.index == 0
             ? "\(p.previousValue) − \(settings.subtractionStep) = ?"
-            : "Keep going: − \(settings.subtractionStep)"
+            : "Take away \(settings.subtractionStep) again"
     }
 
     // MARK: Logging
@@ -550,10 +586,13 @@ final class SessionController {
     private func log(_ type: String, _ fields: [EventField: String] = [:], phase explicitPhase: Phase? = nil) {
         let now = clock()
         let p = explicitPhase ?? phase
-        let set = p.map { settings.config(forSet: $0.setIndex) }
+        let round = p.flatMap { $0 == .rating ? nil : $0.setIndex }
+        var fields = fields
+        if fields[.arm] == nil, let arm = p?.arm { fields[.arm] = arm.rawValue }
         let event = LogEvent(wallClock: Date(), sessionTime: startTime.map { now - $0 } ?? 0,
                              activeTime: session.activeTime, type: type, phase: p?.logName ?? "",
-                             setIndex: p?.setIndex, weightKg: set?.virtualWeightKg, fields: fields)
+                             setIndex: round, weightKg: round.map { settings.config(forSet: $0).virtualWeightKg },
+                             fields: fields)
         recorder?.append(event)
         guard TimeLog.includes(type) else { return }
         let line = TimeLog.line(for: event)

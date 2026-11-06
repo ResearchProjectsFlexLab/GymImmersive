@@ -2,10 +2,11 @@ import Foundation
 
 enum SetStatus: String, Sendable { case notStarted = "not_started", partial, completed }
 
-/// Everything measured in one set. Set 0 is the practice set.
+/// Everything measured for one arm in one round (rounds are 1-based).
 struct SetRecord: Sendable {
     var index: Int
     var config: SetConfig
+    var arm: DumbbellHand = .right
     var status: SetStatus = .notStarted
     var reps = 0
     var partialReps = 0
@@ -17,9 +18,8 @@ struct SetRecord: Sendable {
     var hold: HoldSummary?
     var nBack: [NBackTrialResult] = []
     var subtraction: [SubtractionResult] = []
-    var tlx: NASATLXRating?
 
-    var label: String { index == 0 ? "practice" : "set\(index)" }
+    var label: String { "round\(index)-\(arm.rawValue)" }
 }
 
 enum CompletionStatus: String, Sendable {
@@ -38,13 +38,16 @@ struct SessionSummary: Sendable {
     var activeTime: TimeInterval = 0
     var pauseCount = 0
     var trackingLossCount = 0
+    /// One record per arm per round that was started, in order.
     var sets: [SetRecord]
+    /// The single workload rating given after the time is up.
+    var tlx: NASATLXRating?
 
     static let columns = [
         "session_id", "participant_id", "condition", "cognitive_task", "dumbbell_hand", "seed",
-        "input_source", "started_at", "ended_at", "completion_status", "stop_reason", "total_active_s",
+        "input_source", "session_duration_s", "started_at", "ended_at", "completion_status", "stop_reason", "total_active_s",
         "pause_count", "tracking_loss_count",
-        "set_index", "set_label", "virtual_weight_kg", "set_status", "reps_completed", "reps_target",
+        "set_index", "set_label", "arm", "virtual_weight_kg", "set_status", "reps_completed", "reps_target",
         "partial_reps", "on_tempo_reps", "mean_tempo_score", "mean_up_s", "mean_down_s",
         "tempo_tolerance_s", "curl_time_limit_reached",
         "hold_target_s", "hold_tracked_s", "hold_time_in_zone_frac", "hold_steady_frac", "hold_arm_drops",
@@ -57,9 +60,14 @@ struct SessionSummary: Sendable {
         "tlx_frustration", "tlx_raw_mean",
     ]
 
+    /// One row per started round. A session that ended before any round started still gets one
+    /// row (with empty round columns), so its status and rating are never lost.
     func csv() -> String {
         var lines = [CSV.line(Self.columns)]
-        for set in sets { lines.append(CSV.line(row(for: set))) }
+        let rows = sets.isEmpty ? [SetRecord(index: 0, config: SetConfig(virtualWeightKg: 0, curlReps: 0, holdDuration: 0,
+                                                                          tempoTolerance: 0, steadinessRadius: 0,
+                                                                          armDropTolerance: 0))] : sets
+        for set in rows { lines.append(CSV.line(row(for: set))) }
         return lines.joined(separator: "\n") + "\n"
     }
 
@@ -70,12 +78,13 @@ struct SessionSummary: Sendable {
         let started = s.status != .notStarted
         let session: [String] = [
             sessionID, info.participantID, info.condition, CSV.bool(info.cognitiveTaskEnabled),
-            info.dumbbellHand.rawValue, String(info.seed), inputSource, CSV.iso(startedAt),
+            info.dumbbellHand.rawValue, String(info.seed), inputSource, CSV.number(info.duration, decimals: 0),
+            CSV.iso(startedAt),
             endedAt.map(CSV.iso) ?? "", status.rawValue, stopReason, CSV.number(activeTime),
             String(pauseCount), String(trackingLossCount),
         ]
         let curls: [String] = [
-            String(s.index), s.label, CSV.number(s.config.virtualWeightKg, decimals: 1), s.status.rawValue,
+            String(s.index), s.label, s.arm.rawValue, CSV.number(s.config.virtualWeightKg, decimals: 1), s.status.rawValue,
             started ? String(s.reps) : "", String(s.config.curlReps),
             started ? String(s.partialReps) : "", started ? String(s.onTempoReps) : "",
             CSV.number(mean(s.tempoScores)), CSV.number(mean(s.upDurations)), CSV.number(mean(s.downDurations)),
@@ -99,7 +108,7 @@ struct SessionSummary: Sendable {
             String(sub.attempts), String(sub.correct), String(sub.incorrect), String(sub.timeouts),
             CSV.number(sub.accuracy), CSV.number(sub.meanCorrectRT.map { $0 * 1000 }, decimals: 0),
         ] : Array(repeating: "", count: 6)
-        let tlx: [String] = s.tlx.map { t in
+        let tlx: [String] = self.tlx.map { t in
             TLXScale.allCases.map { CSV.number(t[$0], decimals: 0) } + [CSV.number(t.rawMean, decimals: 1)]
         } ?? Array(repeating: "", count: 7)
         return session + curls + hold + nback + subtraction + tlx

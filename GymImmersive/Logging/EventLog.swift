@@ -37,28 +37,28 @@ enum TLXScale: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .mental: "Mental Demand"
-        case .physical: "Physical Demand"
-        case .temporal: "Temporal Demand"
-        case .performance: "Performance"
+        case .mental: "Mind"
+        case .physical: "Body"
+        case .temporal: "Rush"
+        case .performance: "How you did"
         case .effort: "Effort"
-        case .frustration: "Frustration"
+        case .frustration: "Stress"
         }
     }
 
     var question: String {
         switch self {
-        case .mental: "How mentally demanding was the set?"
-        case .physical: "How physically demanding was the set?"
-        case .temporal: "How hurried or rushed was the pace?"
-        case .performance: "How successful were you at what you were asked to do?"
-        case .effort: "How hard did you have to work?"
-        case .frustration: "How insecure, discouraged, irritated or stressed were you?"
+        case .mental: "How hard was it for your mind?"
+        case .physical: "How hard was it for your body?"
+        case .temporal: "How rushed did you feel?"
+        case .performance: "How well did you do?"
+        case .effort: "How hard did you have to try?"
+        case .frustration: "How stressed or annoyed were you?"
         }
     }
 
     var anchors: (low: String, high: String) {
-        self == .performance ? ("Perfect", "Failure") : ("Very low", "Very high")
+        self == .performance ? ("Great", "Bad") : ("Low", "High")
     }
 }
 
@@ -79,6 +79,8 @@ enum EventField: String, CaseIterable, Sendable {
     case tlxPerformance = "tlx_performance", tlxEffort = "tlx_effort", tlxFrustration = "tlx_frustration"
     case tlxRawMean = "tlx_raw_mean"
     case reason, status, detail
+    /// Which arm the event belongs to ("right" / "left").
+    case arm
 }
 
 struct LogEvent: Sendable {

@@ -38,30 +38,39 @@ struct CSVTests {
 struct SummaryTests {
     @Test func rowsMatchColumnsForEveryState() {
         let settings = WorkoutSettings()
-        var sets = (0...3).map { SetRecord(index: $0, config: settings.config(forSet: $0)) }
+        var sets = (1...3).map { SetRecord(index: $0, config: settings.config(forSet: $0)) }
         sets[0].status = .completed
-        sets[0].reps = 5
+        sets[0].reps = 10
         sets[0].tempoScores = [1, 0.5]
         sets[1].status = .partial
         sets[1].hold = HoldSummary(trackedDuration: 12, timeInZoneFraction: 0.9, steadyFraction: 0.8, armDropCount: 1,
                                    tremorRMSmm: 1.234, verticalDriftMm: -20, totalDriftMm: 22, sampleCount: 1000)
-        sets[1].tlx = NASATLXRating()
         sets[1].nBack = [NBackTrialResult(index: 0, color: .red, isMatch: false, responded: false, reactionTime: nil,
                                           outcome: .correctRejection)]
-        let summary = SessionSummary(sessionID: "P_1", info: .test(), inputSource: "fake",
+        var summary = SessionSummary(sessionID: "P_1", info: .test(), inputSource: "fake",
                                      startedAt: Date(), status: .incomplete, stopReason: "user_stopped", sets: sets)
+        summary.tlx = NASATLXRating()
         let lines = summary.csv().split(separator: "\n").map(String.init)
-        #expect(lines.count == 5)
+        #expect(lines.count == 4)
         let header = CSV.parseLine(lines[0])
         #expect(header == SessionSummary.columns)
         let rows = lines.dropFirst().map { Dictionary(uniqueKeysWithValues: zip(header, CSV.parseLine($0))) }
         for line in lines.dropFirst() { #expect(CSV.parseLine(line).count == header.count) }
-        #expect(rows[0]["mean_tempo_score"] == "0.750")
+        #expect(rows[0]["set_label"] == "round1-right" && rows[0]["arm"] == "right" && rows[0]["mean_tempo_score"] == "0.750")
         #expect(rows[1]["hold_tremor_rms_mm"] == "1.23")
-        #expect(rows[1]["tlx_raw_mean"] == "50.0")
+        #expect(rows.allSatisfy { $0["tlx_raw_mean"] == "50.0" }, "the single rating is on every row")
         #expect(rows[1]["nback_correct_rejections"] == "1")
-        #expect(rows[3]["set_status"] == "not_started")
-        #expect(rows.allSatisfy { $0["completion_status"] == "incomplete" })
+        #expect(rows[2]["set_status"] == "not_started")
+        #expect(rows.allSatisfy { $0["completion_status"] == "incomplete" && $0["session_duration_s"] == "180" })
+    }
+
+    @Test func sessionWithoutRoundsStillHasOneRow() {
+        let summary = SessionSummary(sessionID: "S", info: .test(), inputSource: "fake", startedAt: Date(),
+                                     status: .incomplete, stopReason: "immersive_space_open_failed", sets: [])
+        let lines = summary.csv().split(separator: "\n").map(String.init)
+        #expect(lines.count == 2)
+        let row = Dictionary(uniqueKeysWithValues: zip(CSV.parseLine(lines[0]), CSV.parseLine(lines[1])))
+        #expect(row["completion_status"] == "incomplete" && row["stop_reason"] == "immersive_space_open_failed")
     }
 }
 
@@ -112,6 +121,7 @@ struct RecorderTests {
             let c = try SessionController(settings: WorkoutSettings(), info: .test(), input: input, directory: dir,
                                           voice: SilentCoach(), clock: { clock.now })
             await c.begin()
+            c.startWorkout()
             clock.now += 6
             c.tick()
             #expect(SessionArchive.completionStatus(of: c.summaryURL!) == "in_progress")
@@ -134,7 +144,7 @@ struct RecorderTests {
     @Test func completedSessionsAreNotTouchedByRecovery() async throws {
         let dir = Synthetic.tempDirectory()
         var summary = SessionSummary(sessionID: "X", info: .test(), inputSource: "fake", startedAt: Date(),
-                                     sets: [SetRecord(index: 0, config: WorkoutSettings().practice)])
+                                     sets: [SetRecord(index: 1, config: WorkoutSettings().config(forSet: 1))])
         summary.status = .completed
         let rec = try SessionRecorder(directory: dir, info: .test(), startedAt: Date())
         rec.writeSummary(summary)

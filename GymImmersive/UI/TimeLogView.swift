@@ -17,14 +17,37 @@ struct TimeLogView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+            }
+            if let file = controller.timeLogURL?.lastPathComponent {
+                Text("Saved automatically on this device as \(file).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                // Choose a folder (Files, iCloud Drive, a connected drive…) and save a copy there.
                 Button {
-                    exportText = controller.timeLogText
+                    // The file on disk is the complete log; the in-memory list keeps only the newest lines.
+                    exportText = controller.timeLogURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                        ?? controller.timeLogText
                     showExporter = true
                 } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Label("Save log", systemImage: "square.and.arrow.down")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(controller.timeLog.isEmpty)
-                .accessibilityHint("Saves the time log as a text file")
+                .accessibilityHint("Saves a copy of the time log as a text file in a folder you choose")
+                // Or send it: AirDrop, Mail, Messages, Notes, Files…
+                if let url = controller.timeLogURL {
+                    ShareLink(item: url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .font(.title3.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Sends the time log file with AirDrop, Mail, Files and more")
+                }
             }
             if let saveNotice {
                 Text(saveNotice)
@@ -76,5 +99,39 @@ struct LogFile: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: Data(text.utf8))
+    }
+}
+
+/// Live time log in the gym, next to the coach: the newest timestamped lines, updated as
+/// events happen. The full log is in the session's `_timelog.txt` and the Save button on the
+/// Start window.
+struct LiveTimeLogPanel: View {
+    var controller: SessionController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Time log", systemImage: "clock")
+                    .font(.headline)
+                Spacer()
+                Text("\(controller.timeLog.count) entries")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(controller.timeLog.suffix(10)) { entry in
+                    Text(entry.line)
+                        .font(.caption.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(20)
+        .frame(width: 560)
+        .glassBackgroundEffect()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Time log, \(controller.timeLog.count) entries")
     }
 }

@@ -7,6 +7,9 @@ final class GymSceneObjects {
     let dumbbell = DumbbellEntity()
     let audio = GymAudio()
     var holder = Entity()
+    /// Hand anchors for both hands (device only); the dumbbell moves to the active arm's anchor.
+    var handAnchors: [DumbbellHand: Entity] = [:]
+    var dumbbellArm: DumbbellHand?
     let zoneMarker: ModelEntity = {
         var material = UnlitMaterial(color: UIColor(red: 0.3, green: 0.9, blue: 0.5, alpha: 1))
         material.blending = .transparent(opacity: 0.18)
@@ -15,7 +18,6 @@ final class GymSceneObjects {
         return e
     }()
     var coach: Entity?
-    var controls: Entity?
     var panelsPlacedForHeadHeight: Float?
     var updateSubscription: EventSubscription?
     var appliedRepFeedback = 0
@@ -27,8 +29,9 @@ final class GymSceneObjects {
     }
 }
 
-/// The full immersive gym. Hosts the environment, the dumbbell, the coach and the controls,
-/// and starts / ends the session together with the immersive space.
+/// The full immersive gym. Hosts the environment, the dumbbell, the coach (which also holds the
+/// Pause/Stop controls) and the wall timer board, and starts / ends the session together with
+/// the immersive space.
 struct ImmersiveGymView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -53,23 +56,36 @@ struct ImmersiveGymView: View {
                 holder.isEnabled = false
                 holder.addChild(scene.dumbbell.root)
             } else {
-                let chirality: AnchoringComponent.Target.Chirality = controller.info.dumbbellHand == .right ? .right : .left
-                holder = AnchorEntity(.hand(chirality, location: .palm), trackingMode: .predicted)
+                for arm in DumbbellHand.allCases {
+                    let anchor = AnchorEntity(.hand(arm == .right ? .right : .left, location: .palm), trackingMode: .predicted)
+                    scene.handAnchors[arm] = anchor
+                    content.add(anchor)
+                }
+                holder = scene.handAnchors[controller.activeArm]!
                 scene.dumbbell.root.position = DumbbellEntity.palmOffset
                 scene.dumbbell.root.orientation = DumbbellEntity.palmRotation
                 holder.addChild(scene.dumbbell.root)
+                scene.dumbbellArm = controller.activeArm
             }
             scene.holder = holder
-            content.add(holder)
+            if holder.parent == nil { content.add(holder) }
             content.add(scene.zoneMarker)
 
             if let coach = attachments.entity(for: "coach") {
                 scene.coach = coach
                 content.add(coach)
             }
-            if let controls = attachments.entity(for: "controls") {
-                scene.controls = controls
-                content.add(controls)
+            if let log = attachments.entity(for: "log") {
+                // To the right of the coach, turned slightly toward the participant.
+                log.position = [0.8, 1.4, -1.25]
+                log.orientation = simd_quatf(angle: -0.4, axis: [0, 1, 0])
+                content.add(log)
+            }
+            if let board = attachments.entity(for: "board") {
+                // Large LED-style timer on the front wall, above the dumbbell rack.
+                board.position = [0, 2.6, -6.86]
+                board.scale = SIMD3(repeating: 3.2)
+                content.add(board)
             }
             placePanels(headHeight: 1.5)
 
@@ -81,12 +97,19 @@ struct ImmersiveGymView: View {
             Attachment(id: "coach") {
                 CoachPanel(controller: controller)
             }
-            Attachment(id: "controls") {
-                ControlsPanel(controller: controller)
+            Attachment(id: "log") {
+                LiveTimeLogPanel(controller: controller)
+            }
+            Attachment(id: "board") {
+                WallTimerBoard(controller: controller)
             }
         }
         .task {
             await controller.begin()
+            #if DEBUG
+            // Debug-only: `-skipIntro` presses Start automatically (for Simulator checks).
+            if CommandLine.arguments.contains("-skipIntro") { controller.startWorkout() }
+            #endif
         }
         .onChange(of: controller.status.isFinished, initial: true) { _, finished in
             guard finished else { return }
@@ -115,6 +138,12 @@ struct ImmersiveGymView: View {
     private func syncScene(with controller: SessionController) {
         let dumbbell = scene.dumbbell
         if let set = controller.currentSet { dumbbell.setWeight(set.virtualWeightKg) }
+        // Move the dumbbell to the hand now holding the phone.
+        if scene.dumbbellArm != controller.activeArm, let anchor = scene.handAnchors[controller.activeArm] {
+            anchor.addChild(dumbbell.root, preservingWorldTransform: false)
+            scene.holder = anchor
+            scene.dumbbellArm = controller.activeArm
+        }
         dumbbell.setPlateColor(controller.plateColor)
 
         if let sample = controller.lastSample {
@@ -145,17 +174,15 @@ struct ImmersiveGymView: View {
     private func mayRepositionPanels(_ controller: SessionController) -> Bool {
         switch controller.phase {
         case nil: controller.status == .ready
-        case .prepare(0, _)?: true
+        case .prepare(1, .curls, .right)?: true
         default: false
         }
     }
 
-    /// Places the coach at eye level ~1.4 m ahead and the controls lower and closer, tilted up.
-    /// Panels are only re-placed during the practice set, so they never move mid-workout.
+    /// Centres the coach (with its Pause/Stop row) just below eye level, 1.35 m ahead, so all of
+    /// it is in view. It is only re-placed while getting ready, so it never moves mid-workout.
     private func placePanels(headHeight: Float) {
         scene.panelsPlacedForHeadHeight = headHeight
-        scene.coach?.position = [0, headHeight + 0.05, -1.45]
-        scene.controls?.position = [0.0, headHeight - 0.55, -1.0]
-        scene.controls?.orientation = simd_quatf(angle: -0.45, axis: [1, 0, 0])
+        scene.coach?.position = [0, headHeight - 0.08, -1.35]
     }
 }

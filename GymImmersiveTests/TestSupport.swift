@@ -31,6 +31,9 @@ final class FakeInput: MovementInputProvider {
     }
 
     func setMotionHint(_ hint: MotionHint) { hints.append(hint) }
+
+    private(set) var arms: [DumbbellHand] = []
+    func setActiveArm(_ arm: DumbbellHand) { arms.append(arm) }
 }
 
 enum Synthetic {
@@ -74,8 +77,8 @@ enum Synthetic {
 }
 
 extension SessionInfo {
-    static func test(cognitive: Bool = true, id: String = "P01") -> SessionInfo {
+    static func test(cognitive: Bool = true, id: String = "P01", duration: TimeInterval = 180) -> SessionInfo {
         SessionInfo(participantID: id, condition: "dual, task", cognitiveTaskEnabled: cognitive,
-                    dumbbellHand: .right, seed: 12345)
+                    dumbbellHand: .right, seed: 12345, duration: duration)
     }
 }

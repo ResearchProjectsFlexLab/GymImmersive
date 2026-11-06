@@ -178,6 +178,6 @@ struct TempoScore: Sendable, Equatable {
     var coachTip: String? {
         if onTempo { return nil }
         let worst = abs(upError) > abs(downError) ? upError : downError
-        return worst < 0 ? "Slow it down" : "A little quicker"
+        return worst < 0 ? "Slower, please" : "A bit faster"
     }
 }

@@ -11,14 +11,14 @@ struct TimeLogLineTests {
         let event = LogEvent(wallClock: date, sessionTime: 12.3, activeTime: 12.3, type: "rep", phase: "curls",
                              setIndex: 1, weightKg: 5, fields: [.repIndex: "3", .tempoScore: "0.950"])
         let line = TimeLog.line(for: event)
-        #expect(line == "2026-11-02 14:03:12.481  t=12.300s  [set1 curls]  rep  rep_index=3 tempo_score=0.950")
+        #expect(line == "2026-11-02 14:03:12.481  t=12.300s  [round1 curls]  rep  rep_index=3 tempo_score=0.950")
     }
 
-    @Test func practiceSetAndNoPhase() {
+    @Test func ratingPhaseAndNoPhase() {
         let date = Date(timeIntervalSince1970: 0)
-        let practice = LogEvent(wallClock: date, sessionTime: 0, activeTime: 0, type: "phase_start", phase: "curls",
-                                setIndex: 0, weightKg: 2)
-        #expect(TimeLog.line(for: practice).contains("[practice curls]  phase_start"))
+        let rating = LogEvent(wallClock: date, sessionTime: 0, activeTime: 0, type: "phase_start", phase: "rating",
+                              setIndex: nil, weightKg: nil)
+        #expect(TimeLog.line(for: rating).contains("[rating]  phase_start"))
         let bare = LogEvent(wallClock: date, sessionTime: 0, activeTime: 0, type: "session_created", phase: "",
                             setIndex: nil, weightKg: nil)
         #expect(!TimeLog.line(for: bare).contains("["))
@@ -40,7 +40,7 @@ struct TimeLogRecordingTests {
         rec.append(LogEvent(wallClock: Date(), sessionTime: 0, activeTime: 0, type: "session_started", phase: "",
                             setIndex: nil, weightKg: nil))
         rec.append(LogEvent(wallClock: Date(), sessionTime: 0.1, activeTime: 0.1, type: "motion_sample", phase: "curls",
-                            setIndex: 0, weightKg: 2))
+                            setIndex: 1, weightKg: 5))
         // Read without closing: simulates a crash right after logging.
         let lines = try String(contentsOf: rec.timeLogURL, encoding: .utf8).split(separator: "\n")
         #expect(lines.count == 2)
@@ -55,6 +55,7 @@ struct TimeLogRecordingTests {
         let c = try SessionController(settings: WorkoutSettings(), info: .test(), input: FakeInput(), directory: dir,
                                       voice: SilentCoach(), clock: { clock.now })
         await c.begin()
+        c.startWorkout()
         clock.now += 6
         c.tick()
         c.pause()
@@ -82,6 +83,7 @@ struct TimeLogRecordingTests {
             let c = try SessionController(settings: WorkoutSettings(), info: .test(), input: FakeInput(), directory: dir,
                                           voice: SilentCoach(), clock: { clock.now })
             await c.begin()
+            c.startWorkout()
         }
         #expect(SessionArchive.recoverInterruptedSessions(in: dir) == 1)
         let url = try #require(try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)

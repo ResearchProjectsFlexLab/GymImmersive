@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The only controls in the gym: Pause/Resume and Stop. Stop is shown until the session ends.
+/// The only controls in the gym: Pause/Resume and Stop. Shown inside the coach panel until the
+/// session ends; before Start only Stop is shown.
 struct ControlsPanel: View {
     var controller: SessionController
 
@@ -11,24 +12,21 @@ struct ControlsPanel: View {
                     Label("Resume", systemImage: "play.fill")
                 }
                 .accessibilityHint("Continues the workout where it stopped")
-            } else {
+            } else if controller.status != .ready {
                 Button { controller.pause() } label: {
                     Label("Pause", systemImage: "pause.fill")
                 }
                 .disabled(controller.status != .running)
                 .accessibilityHint("Pauses the timer and tasks")
             }
-            Button(role: .destructive) { controller.stop() } label: {
+            Button { controller.stop() } label: {
                 Label("Stop", systemImage: "stop.fill")
+                    .foregroundStyle(.white)
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
             .accessibilityHint("Ends the session immediately")
         }
         .controlSize(.large)
-        .padding(20)
-        .glassBackgroundEffect()
-        .opacity(controller.status.isFinished ? 0 : 1)
-        .allowsHitTesting(!controller.status.isFinished)
     }
 }

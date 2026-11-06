@@ -13,7 +13,7 @@ enum DumbbellHand: String, CaseIterable, Codable, Sendable, Identifiable {
 struct SetConfig: Equatable, Sendable {
     var virtualWeightKg: Double
     var curlReps: Int
-    /// 0 means the set has no extended-arm hold (the practice set).
+    /// 0 means the round has no extended-arm hold.
     var holdDuration: TimeInterval
     /// Allowed absolute error per curl half (up or down), in seconds.
     var tempoTolerance: TimeInterval
@@ -24,15 +24,21 @@ struct SetConfig: Equatable, Sendable {
 }
 
 /// All protocol values live here so a study can be reconfigured in one place.
+///
+/// A session runs for a chosen length of time. It repeats rounds of curls → hold with the right
+/// arm, then curls → hold with the left arm, then rest; round 1
+/// uses `sets[0]`, round 2 `sets[1]`, and every later round the last (heaviest) entry. When the
+/// time is up the current round stops and a single workload rating follows.
 struct WorkoutSettings: Equatable, Sendable {
-    var practice = SetConfig(virtualWeightKg: 2, curlReps: 5, holdDuration: 0,
-                             tempoTolerance: 1.0, steadinessRadius: 0.10, armDropTolerance: 0.14)
+    /// Session lengths offered on the Start screen, in minutes.
+    static let durationOptions = [1, 3, 5, 10]
+
     var sets: [SetConfig] = [
-        SetConfig(virtualWeightKg: 5, curlReps: 10, holdDuration: 30,
+        SetConfig(virtualWeightKg: 5, curlReps: 10, holdDuration: 10,
                   tempoTolerance: 0.8, steadinessRadius: 0.08, armDropTolerance: 0.12),
-        SetConfig(virtualWeightKg: 10, curlReps: 10, holdDuration: 45,
+        SetConfig(virtualWeightKg: 10, curlReps: 10, holdDuration: 15,
                   tempoTolerance: 0.6, steadinessRadius: 0.06, armDropTolerance: 0.10),
-        SetConfig(virtualWeightKg: 15, curlReps: 10, holdDuration: 60,
+        SetConfig(virtualWeightKg: 15, curlReps: 10, holdDuration: 20,
                   tempoTolerance: 0.4, steadinessRadius: 0.04, armDropTolerance: 0.08),
     ]
 
@@ -42,15 +48,16 @@ struct WorkoutSettings: Equatable, Sendable {
     /// so a participant can never get stuck in a set.
     var curlTimeLimitFactor: Double = 2
     var prepareDuration: TimeInterval = 5
-    var restDuration: TimeInterval = 45
-    var practiceRestDuration: TimeInterval = 20
+    var restDuration: TimeInterval = 20
 
-    /// Tracking loss longer than this during an active phase pauses the session.
-    var trackingLossPauseDelay: TimeInterval = 3
+    /// No samples for this long counts (and is logged) as lost tracking. The session keeps running.
+    var inputStallThreshold: TimeInterval = 3
     /// The hand must stay below the hold zone this long before "Arm up!" appears.
     var armUpCueDelay: TimeInterval = 0.5
 
-    // 2-back
+    // 2-back on plate colours during curls. Off by default: the participant holds a phone as
+    // the dumbbell, and the task needs a free-hand pinch to answer.
+    var nBackDuringCurls = false
     var nBackLevel = 2
     var nBackMatchRate = 0.3
 
@@ -71,9 +78,9 @@ struct WorkoutSettings: Equatable, Sendable {
         Double(set.curlReps) * (tempoUp + tempoDown) * curlTimeLimitFactor
     }
 
-    /// Set 0 is practice, 1... are the main sets.
+    /// Difficulty for round `index` (1-based). Rounds past the end of `sets` repeat the last entry.
     func config(forSet index: Int) -> SetConfig {
-        index == 0 ? practice : sets[index - 1]
+        sets[min(max(index, 1), sets.count) - 1]
     }
 }
 
@@ -84,4 +91,6 @@ struct SessionInfo: Equatable, Sendable {
     var cognitiveTaskEnabled: Bool
     var dumbbellHand: DumbbellHand
     var seed: UInt64
+    /// Total workout time; the final rating is not counted.
+    var duration: TimeInterval = 180
 }

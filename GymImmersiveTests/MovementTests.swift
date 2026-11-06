@@ -115,9 +115,9 @@ struct TempoScoreTests {
         let bad = TempoScore.evaluate(up: 1, down: 2, targetUp: 2, targetDown: 2, tolerance: 0.5)
         #expect(abs(bad.score - 0.5) < 1e-9)  // up half 0, down half 1
         #expect(!bad.onTempo)
-        #expect(bad.coachTip == "Slow it down")
+        #expect(bad.coachTip == "Slower, please")
         let slow = TempoScore.evaluate(up: 2, down: 3.5, targetUp: 2, targetDown: 2, tolerance: 0.5)
-        #expect(slow.coachTip == "A little quicker")
+        #expect(slow.coachTip == "A bit faster")
     }
 
     @Test func stricterToleranceForHeavierSets() {
@@ -128,7 +128,7 @@ struct TempoScoreTests {
         let heavy = TempoScore.evaluate(up: 2.5, down: 2, targetUp: 2, targetDown: 2, tolerance: tolerances[2])
         #expect(heavy.score < light.score)
         #expect(settings.sets.map(\.steadinessRadius) == settings.sets.map(\.steadinessRadius).sorted(by: >))
-        #expect(settings.sets.map(\.holdDuration) == [30, 45, 60])
+        #expect(settings.sets.map(\.holdDuration) == [10, 15, 20])
     }
 }
 

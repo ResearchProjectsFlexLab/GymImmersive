@@ -9,7 +9,7 @@ import simd
 final class SimulatedInputProvider: MovementInputProvider {
     let name = "simulated"
     let drivesDumbbellFromSamples = true
-    private let dumbbellHand: DumbbellHand
+    private var dumbbellHand: DumbbellHand
     private var hint: MotionHint = .idle
     private var hintStart: TimeInterval = 0
     private var rng: SeededRandom
@@ -43,6 +43,10 @@ final class SimulatedInputProvider: MovementInputProvider {
     func stop() {
         task?.cancel()
         task = nil
+    }
+
+    func setActiveArm(_ arm: DumbbellHand) {
+        dumbbellHand = arm
     }
 
     func setMotionHint(_ hint: MotionHint) {

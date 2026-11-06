@@ -37,7 +37,7 @@ enum TimeLog {
 
     static func line(for e: LogEvent) -> String {
         var parts = [LogClock.string(from: e.wallClock), "t=" + CSV.number(e.sessionTime) + "s"]
-        let location = [e.setIndex.map { $0 == 0 ? "practice" : "set\($0)" }, e.phase.isEmpty ? nil : e.phase]
+        let location = [e.setIndex.map { "round\($0)" }, e.phase.isEmpty ? nil : e.phase]
             .compactMap { $0 }.joined(separator: " ")
         if !location.isEmpty { parts.append("[\(location)]") }
         parts.append(e.type)

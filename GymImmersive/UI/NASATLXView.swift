@@ -7,7 +7,7 @@ struct NASATLXView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("How'd that set feel?")
+            Text("How did it feel?")
                 .font(.title2.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
             ForEach(TLXScale.allCases) { scale in
